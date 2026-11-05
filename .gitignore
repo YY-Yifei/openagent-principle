@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+.env
+# 本地原则库：属于个人数据，不进仓库
+.openagent-principle/
+principles.local.json
+*.local.jsonl
+.idea/
+.vscode/
+.DS_Store

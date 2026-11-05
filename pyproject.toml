@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openagent-principle"
+version = "0.5.0"
+description = "致敬《原则》的规则化 agent：维护原则、收集材料、用 Jev 式结构化判断检查是否违反原则"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Yifei Yang", email = "274529723+YY-Yifei@users.noreply.github.com" }]
+keywords = [
+    "agent",
+    "agentscope",
+    "principles",
+    "ray-dalio",
+    "jev",
+    "judgment",
+    "rule-engine",
+    "llm",
+    "cli",
+    "ai-agent",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+# 与 openagent-ds-search 同一条纪律：本项目确实依赖 AgentScope 的实现细节
+# （`Agent.state.context` 的累积语义、`permission_context.mode`、`Toolkit`/`FunctionTool`
+# 的构造签名）。跨 minor 升级可能静默改变行为，升级请走受控验证。
+# 注意：**判断层不依赖 AgentScope** —— judge/rules/jev 只用 stdlib，
+# 所以「不进 agent 也能判」是本项目的硬保证，AgentScope 只服务 chat 模式。
+dependencies = ["agentscope>=2.0.5,<2.1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "build>=1.2", "twine>=5"]
+
+[project.urls]
+Homepage = "https://github.com/YY-Yifei/openagent-principle"
+Repository = "https://github.com/YY-Yifei/openagent-principle"
+Issues = "https://github.com/YY-Yifei/openagent-principle/issues"
+Changelog = "https://github.com/YY-Yifei/openagent-principle/blob/main/CHANGELOG.md"
+
+[project.scripts]
+openagent-principle = "openagent_principle.cli:main"
+# 短别名：终端里少打几个字
+principles = "openagent_principle.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+openagent_principle = ["data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["src"]
