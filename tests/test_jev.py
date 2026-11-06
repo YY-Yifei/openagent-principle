@@ -207,3 +207,54 @@ def test_ask_reports_non_json(principle):
     transport = fake_transport(200, "<html>gateway</html>")
     with pytest.raises(jev.JevError):
         jev.ask("材料", questions, settings=_settings(), transport=transport)
+
+
+def test_ask_retries_non_json_200_then_succeeds(principle):
+    """200 但响应不是 JSON（网关吐 HTML 错误页）要重试，而不是直接降级。"""
+    calls = []
+
+    def transport(url, headers, payload, timeout):  # noqa: ANN001
+        calls.append(1)
+        if len(calls) == 1:
+            return 200, "<html>gateway</html>"
+        return 200, '{"answers":{"p_001":{"type":"choice","choice":"pass","probabilities":{"pass":0.8}}}}'
+
+    questions, _ = jev.build_questions([principle()])
+    response = jev.ask("材料", questions, settings=_settings(), transport=transport)
+    assert len(calls) == 2
+    assert response.answers["p_001"].value == "pass"
+
+
+def test_ask_retries_missing_answers_200_then_succeeds(principle):
+    """200 但 answers 为空 / 解析不出答案，同样按可重试处理。"""
+    calls = []
+
+    def transport(url, headers, payload, timeout):  # noqa: ANN001
+        calls.append(1)
+        if len(calls) == 1:
+            return 200, '{"model":"jev","answers":{}}'
+        if len(calls) == 2:
+            return 200, '{"answers":{"p_001":{"type":"noul","probabilities":{"x":0.5}}}}'
+        return 200, '{"answers":{"p_001":{"type":"choice","choice":"violation","probabilities":{"violation":0.9}}}}'
+
+    questions, _ = jev.build_questions([principle()])
+    response = jev.ask("材料", questions, settings=_settings(), transport=transport)
+    assert len(calls) == 3
+    assert response.answers["p_001"].value == "violation"
+
+
+def test_ask_default_retries_is_three(principle):
+    """默认重试 3 次 = 最多 4 次请求；耗尽后抛可重试的 JevError。"""
+    assert jev.DEFAULT_RETRIES == 3
+    calls = []
+
+    def transport(url, headers, payload, timeout):  # noqa: ANN001
+        calls.append(1)
+        return 200, "<html>gateway</html>"
+
+    questions, _ = jev.build_questions([principle()])
+    with pytest.raises(jev.JevError) as exc:
+        jev.ask("材料", questions, settings=_settings(), transport=transport)
+    assert len(calls) == 4
+    assert exc.value.retryable is True
+    assert "不是 JSON" in exc.value.message

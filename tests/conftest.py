@@ -1,7 +1,7 @@
 """测试公共夹具：隔离环境变量 + 临时原则库。
 
 为什么每个用例都要清环境变量：开发机上 `DEEPSEEK_API_KEY` / `OPENAI_API_KEY`
-大概率是真的存在的。不清掉的话，「没配 key 时退回 rules 后端」这类用例会
+大概率是真的存在的。不清掉的话，「没配 key 时判断不可用」这类用例会
 变成**真的发请求**，测试既慢又会随网络抖。
 """
 
@@ -61,10 +61,10 @@ def store(env):
 
 @pytest.fixture
 def principle():
-    """一条带机器可判规则的原则 —— 大多数用例的起点。"""
+    """一条可判定的原则 —— 大多数用例的起点。"""
 
     def _make(**overrides):
-        from openagent_principle.models import Principle, Rule
+        from openagent_principle.models import Principle
 
         data = {
             "id": "P-001",
@@ -72,7 +72,6 @@ def principle():
             "statement": "描述问题时不得用无数据支撑的淡化措辞。",
             "criteria": "出现「基本没问题」「影响不大」这类话且没有数据支撑，算违反。",
             "examples": ["反例：目前基本没问题。"],
-            "rules": [Rule(kind="must_not_contain_any", value=["基本没问题", "影响不大"])],
             "severity": 4,
             "tags": ["风险"],
         }

@@ -14,9 +14,23 @@ from openagent_principle.cli import (
 )
 
 
+def _jev_env(monkeypatch, answers: dict) -> None:
+    """配好 JEV，并把传输层换成固定回答 —— CLI 判断用例都走这条。"""
+    from openagent_principle import _http
+
+    monkeypatch.setenv("JEV_API_KEY", "k")
+    monkeypatch.setenv("JEV_BASE_URL", "https://jev.example")
+
+    def _send(url, headers, payload, timeout):  # noqa: ANN001, ARG001
+        return 200, json.dumps({"model": "jev-1.13.0", "answers": answers})
+
+    monkeypatch.setattr(_http, "urllib_transport", _send)
+
+
 def test_add_list_show(env, capsys):
-    assert main(["add", "不粉饰", "不得用无依据的淡化措辞", "--rule",
-                 "must_not_contain_any:基本没问题", "--severity", "4"]) == EXIT_PASS
+    assert main(["add", "不粉饰", "不得用无依据的淡化措辞",
+                 "--criteria", "出现「基本没问题」且无数据支撑算违反",
+                 "--severity", "4"]) == EXIT_PASS
     out = capsys.readouterr().out
     assert "已保存 P-001" in out
 
@@ -24,39 +38,59 @@ def test_add_list_show(env, capsys):
     assert "P-001" in capsys.readouterr().out
 
     assert main(["show", "P-001"]) == EXIT_PASS
-    assert "must_not_contain_any" in capsys.readouterr().out
+    assert "基本没问题" in capsys.readouterr().out
 
 
-def test_judge_exit_codes(env, tmp_path, capsys):
+def test_judge_exit_codes(env, tmp_path, capsys, monkeypatch):
     main(["add", "不粉饰", "不得用无依据的淡化措辞",
-          "--rule", "must_not_contain_any:基本没问题"])
+          "--criteria", "出现「基本没问题」且无数据支撑算违反"])
+    _jev_env(
+        monkeypatch,
+        {
+            "p_001": {
+                "type": "choice",
+                "choice": "violation",
+                "probabilities": {"pass": 0.05, "violation": 0.9},
+                "confidence": 0.85,
+            },
+            "overall": {"type": "choice", "choice": "violation"},
+        },
+    )
 
     bad = tmp_path / "bad.md"
     bad.write_text("目前基本没问题。", encoding="utf-8")
     assert main(["judge", str(bad)]) == EXIT_VIOLATION
     assert "结论：违反" in capsys.readouterr().out
 
-    good = tmp_path / "good.md"
-    good.write_text("存在 2 个高优缺陷，若周五不修将影响 30% 用户。", encoding="utf-8")
-    assert main(["judge", str(good)]) == EXIT_PASS
-
     # 没有材料 / 空材料 → 参数错误（2）
     assert main(["judge", "--text", "  "]) == EXIT_UNCERTAIN
     assert main(["judge", str(tmp_path / "missing.md")]) == EXIT_UNCERTAIN
 
 
-def test_judge_text_and_json_output(env, capsys):
-    main(["add", "不粉饰", "s", "--rule", "must_not_contain_any:基本没问题"])
+def test_judge_text_and_json_output(env, capsys, monkeypatch):
+    main(["add", "不粉饰", "s", "--criteria", "出现「基本没问题」算违反"])
+    _jev_env(
+        monkeypatch,
+        {
+            "p_001": {
+                "type": "choice",
+                "choice": "violation",
+                "probabilities": {"pass": 0.05, "violation": 0.9},
+                "confidence": 0.85,
+            },
+            "overall": {"type": "choice", "choice": "violation"},
+        },
+    )
     capsys.readouterr()
     code = main(["judge", "--text", "目前基本没问题", "--json"])
     payload = json.loads(capsys.readouterr().out)
     assert code == EXIT_VIOLATION
     assert payload["overall"] == "violation"
-    assert payload["backend"] == "rules"
-    assert payload["verdicts"][0]["evidence"]
+    assert payload["backend"] == "jev"
 
 
-def test_judge_empty_library_is_uncertain(env):
+def test_judge_empty_library_is_uncertain(env, monkeypatch):
+    _jev_env(monkeypatch, {})
     assert main(["judge", "--text", "随便一段材料"]) == EXIT_UNCERTAIN
 
 
@@ -111,12 +145,12 @@ def test_judge_directory_is_param_error(env, tmp_path, capsys):
     assert "目录" in capsys.readouterr().err
 
 
-def test_bad_rule_is_param_error_not_execution_failure(env, capsys):
-    """`--rule` 写错是参数错误 → 退出码 2（OCR 复审发现）。
+def test_missing_statement_is_param_error_not_execution_failure(env, capsys):
+    """字段不合法是参数错误 → 退出码 2（OCR 复审发现）。
 
     以前 `ModelError` 被当成执行失败（3），CI 分不清「参数写错」和「跑挂了」。
     """
-    code = main(["add", "t", "s", "--rule", "没有冒号"])
+    code = main(["add", "只有标题", "   "])
     assert code == EXIT_UNCERTAIN
     assert "[错误]" in capsys.readouterr().err
 
@@ -135,8 +169,20 @@ def test_home_survives_corrupt_legacy_store(env, monkeypatch, capsys, tmp_path):
     assert "读不了" in out or "旧库" in out
 
 
-def test_feedback_command(env, capsys):
-    main(["add", "不粉饰", "s", "--rule", "must_not_contain_any:基本没问题"])
+def test_feedback_command(env, capsys, monkeypatch):
+    main(["add", "不粉饰", "s", "--criteria", "出现「基本没问题」算违反"])
+    _jev_env(
+        monkeypatch,
+        {
+            "p_001": {
+                "type": "choice",
+                "choice": "violation",
+                "probabilities": {"pass": 0.05, "violation": 0.9},
+                "confidence": 0.85,
+            },
+            "overall": {"type": "choice", "choice": "violation"},
+        },
+    )
     main(["judge", "--text", "基本没问题"])
     capsys.readouterr()
     cases = json.loads(_json_cases(env))
@@ -159,8 +205,18 @@ def test_check_runs_offline_without_keys(env, capsys):
     code = main(["check"])
     out = capsys.readouterr().out
     assert "判断后端" in out
-    assert "没配 JEV key" in out
+    assert "不可用" in out
     assert code == EXIT_PASS
+
+
+def test_banner_survives_missing_backend(env):
+    """没配 key 时 banner 要显示「不可用」，不能抛异常把 chat 拦在门外（OCR 复审发现）。"""
+    from openagent_principle.cli import _banner
+    from openagent_principle.config import load_settings
+
+    text = _banner(load_settings(), "对话")
+    assert "判断后端" in text
+    assert "不可用" in text
 
 
 # ------------------------------------------------------------------ 单轮提示词

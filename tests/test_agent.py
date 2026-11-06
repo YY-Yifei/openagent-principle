@@ -195,10 +195,14 @@ def test_system_prompt_promises_general_ability(env):
 
 
 def test_describe_mentions_backend_home_and_toolset(env):
-    from openagent_principle.judge import choose_backend
-
     settings = load_settings()
     text = describe(settings)
-    assert choose_backend(settings)[0] in text
+    assert "判断后端" in text
     assert str(settings.home_path) in text
     assert "full" in text
+
+
+def test_describe_says_backend_unavailable_without_keys(env):
+    """没配任何模型时，自述要如实说「不可用」，而不是抛异常。"""
+    text = describe(load_settings())
+    assert "不可用" in text

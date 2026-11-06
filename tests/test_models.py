@@ -8,45 +8,8 @@ from openagent_principle.models import (
     Judgement,
     ModelError,
     Principle,
-    Rule,
     Verdict,
-    parse_rules,
 )
-
-
-def test_rule_validates_known_kind():
-    rule = Rule(kind="must_not_contain_any", value="绝对没问题")
-    rule.validate()
-    assert rule.value == ["绝对没问题"]  # 单值被规范化成列表
-
-
-@pytest.mark.parametrize(
-    ("kind", "value"),
-    [
-        ("unknown_kind", "x"),
-        ("must_not_contain_any", ""),
-        ("must_not_contain_any", []),
-        ("min_chars", "abc"),
-        ("min_chars", "-1"),
-        ("must_match", "(["),
-    ],
-)
-def test_rule_rejects_bad_input(kind, value):
-    with pytest.raises(ModelError):
-        Rule(kind=kind, value=value).validate()
-
-
-def test_parse_rules_accepts_json_and_dict():
-    assert parse_rules("") == []
-    rules = parse_rules('[{"kind":"must_contain_any","value":"改进,措施"}]')
-    assert len(rules) == 1 and rules[0].kind == "must_contain_any"
-    single = parse_rules({"kind": "max_chars", "value": 100})
-    assert single[0].value == 100
-
-
-def test_parse_rules_rejects_broken_json():
-    with pytest.raises(ModelError):
-        parse_rules("[{oops")
 
 
 def test_principle_requires_title_and_statement():
@@ -90,7 +53,7 @@ def test_judgement_orders_violations_by_severity():
             Verdict("P-003", "没事", False, severity=5),
             Verdict("P-004", "存疑", None, severity=3),
         ],
-        backend="rules",
+        backend="jev",
     )
     assert [v.principle_id for v in judgement.violations] == ["P-002", "P-001"]
     assert [v.principle_id for v in judgement.uncertain] == ["P-004"]

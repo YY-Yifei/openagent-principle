@@ -385,7 +385,7 @@ class PrincipleStore:
         """记录一次人工反馈：同意标「正确」，不同意标「误判」。
 
         这是「痛苦 + 反思 = 进步」的落点：反馈不改写历史案例，但可以统计出
-        「哪条原则最常被判错」，从而提醒人去修订它的 `criteria` / `rules`。
+        「哪条原则最常被判错」，从而提醒人去修订它的 `criteria` / `examples`。
 
         Args:
             case_id: 案例号。
@@ -445,13 +445,6 @@ def seed_principles() -> list[dict[str, Any]]:
     返还的是 `to_dict()` 形态 —— 直接 `Principle.from_dict` 就能落库，
     也可以被 `cli seed` 写进用户库当作起点。
     """
-    from .models import Rule
-
-    def rule(kind: str, value: str | list[str], note: str = "") -> Rule:
-        r = Rule(kind=kind, value=value, note=note)
-        r.validate()
-        return r
-
     seeds = [
         Principle(
             id="P-001",
@@ -459,12 +452,8 @@ def seed_principles() -> list[dict[str, Any]]:
             statement="任何重要结论都要给出可核对的依据；没有依据的判断必须标注为推断。",
             rationale="达利欧把「极度求真」放在原则体系的最底层：不真实的信息会让所有后续决策一起错。",
             scope="分析报告 / 决策建议 / 事实性回答",
-            scope_keywords=["报告", "建议", "结论", "分析", "数据"],
             criteria="结论涉及事实时，必须能指出依据（来源、原文、数据）；只有观点没有依据时，须显式写「推断」。",
             examples=["反例：这个方案肯定能成。（无依据）", "正例：这个方案能成，因为 A 测试中转化率提升 12%（数据来源：…）。"],
-            rules=[
-                rule("must_not_contain_any", ["肯定能成", "绝对没问题", "百分之百"], "禁用无依据的绝对化断言"),
-            ],
             severity=4,
             tags=["求真", "证据"],
             source="seed",
@@ -475,10 +464,8 @@ def seed_principles() -> list[dict[str, Any]]:
             statement="采纳意见时要考虑提出者的可信度（历史准确率、专业相关性），并说明权重依据。",
             rationale="达利欧的「可信度加权决策」：一人一票会稀释专家意见，只看权威又会压制新信息。",
             scope="决策讨论 / 评审意见 / 多人分歧",
-            scope_keywords=["决策", "评审", "分歧", "意见", "讨论"],
             criteria="出现分歧时，应说明各方依据与可信度差异；不得只按职位或声量定结论。",
             examples=["反例：老板说行就行。", "正例：A 在该领域有 3 次准确预测记录，本次结论采纳其判断，权重更高。"],
-            rules=[],
             severity=3,
             tags=["决策", "可信度"],
             source="seed",
@@ -489,12 +476,8 @@ def seed_principles() -> list[dict[str, Any]]:
             statement="复盘错误时，除了解释原因，还必须给出一条可执行的改进措施与责任人。",
             rationale="达利欧认为痛苦是信号，反思是把它转成进步的唯一通道；只解释不改进等于白痛一次。",
             scope="复盘 / 事故报告 / 项目总结",
-            scope_keywords=["复盘", "事故", "总结", "回顾", "延期", "故障"],
             criteria="提到问题或错误时，必须同时出现改进措施；仅有「下次注意」不算可执行措施。",
             examples=["反例：这次延期是因为排期太紧，下次注意。", "正例：延期原因…；改进：需求评审增加估算环节，责任人张三，下次迭代生效。"],
-            rules=[
-                rule("must_contain_any", ["改进", "措施", "行动项", "责任人"], "复盘类材料必须包含改进项"),
-            ],
             severity=4,
             tags=["复盘", "进步"],
             source="seed",
@@ -505,12 +488,8 @@ def seed_principles() -> list[dict[str, Any]]:
             statement="描述问题时必须直说事实与影响，不得用模糊措辞淡化风险。",
             rationale="「极度透明」要求把坏消息原样传上去；粉饰会让问题在更晚、更贵的时候爆发。",
             scope="风险汇报 / 项目周报 / 对外说明",
-            scope_keywords=["风险", "周报", "汇报", "说明", "进度"],
             criteria="不得出现「基本没问题」「影响不大」这类无数据支撑的淡化措辞；风险要写清触发条件与后果。",
             examples=["反例：目前基本没问题，影响不大。", "正例：当前有 2 个高优缺陷未修复，若周五前不解决，将影响 30% 用户下单。"],
-            rules=[
-                rule("must_not_contain_any", ["基本没问题", "影响不大", "问题不大"], "禁用无数据支撑的淡化措辞"),
-            ],
             severity=3,
             tags=["透明", "风险"],
             source="seed",
@@ -521,12 +500,8 @@ def seed_principles() -> list[dict[str, Any]]:
             statement="任何方案类材料必须先声明目标与成功标准（可量化），再给做法。",
             rationale="达利欧的五步流程第一步就是「明确目标」；目标不清时，方案再精致也无法判断对错。",
             scope="方案 / 需求 / 计划",
-            scope_keywords=["方案", "需求", "计划", "规划", "设计"],
             criteria="材料中应能找到目标与衡量指标；只有做法没有目标的，视为违反。",
             examples=["反例：我们打算重写这个模块。", "正例：目标是把 P95 延迟从 800ms 降到 200ms，方案是重写模块…"],
-            rules=[
-                rule("must_contain_any", ["目标", "指标", "成功标准", "衡量"], "方案类材料必须写明目标或指标"),
-            ],
             severity=3,
             tags=["目标", "五步流程"],
             source="seed",
@@ -537,12 +512,8 @@ def seed_principles() -> list[dict[str, Any]]:
             statement="描述他人动机或情绪时，必须与可观察的行为分开陈述。",
             rationale="把「他不在乎」当事实写进报告，会让后续讨论建立在猜测上 —— 这是求真的大敌。",
             scope="人事评价 / 冲突复盘 / 沟通记录",
-            scope_keywords=["评价", "冲突", "沟通", "记录", "人事", "反馈"],
             criteria="不得直接断言他人主观动机（如「他就是不想做」）；应写可观察的行为与影响。",
             examples=["反例：他根本不重视这个项目。", "正例：他连续两次未回复评审请求，导致排期延后 3 天。"],
-            rules=[
-                rule("must_not_contain_any", ["根本不重视", "就是不想", "故意刁难"], "禁止把动机猜测写成事实"),
-            ],
             severity=3,
             tags=["沟通", "求真"],
             source="seed",
@@ -553,12 +524,8 @@ def seed_principles() -> list[dict[str, Any]]:
             statement="先判断决策的可逆性：可逆的快速试错，不可逆的必须做足验证与备份。",
             rationale="达利欧强调「区分一类与二类决策」：把不可逆的事当小事办，代价往往不可挽回。",
             scope="技术选型 / 上线 / 合同 / 数据删除",
-            scope_keywords=["选型", "上线", "合同", "删除", "迁移", "发布"],
             criteria="涉及不可逆操作（删数据、签合同、架构迁移）时，必须写明回滚方案或验证步骤。",
             examples=["反例：直接删库重建。", "正例：先全量备份并验证可恢复，再执行删除。"],
-            rules=[
-                rule("must_contain_any", ["回滚", "备份", "验证", "灰度"], "不可逆操作必须写明回滚/验证"),
-            ],
             severity=5,
             tags=["决策", "风险"],
             source="seed",
@@ -569,12 +536,8 @@ def seed_principles() -> list[dict[str, Any]]:
             statement="重要决策要留下「当时为什么这么定、放弃了什么」的记录，供以后复盘。",
             rationale="没有记录就没有复盘；只记得结论的团队会反复踩同一个坑。",
             scope="重要决策 / 架构变更 / 人事决定",
-            scope_keywords=["决策", "变更", "决定", "选型", "架构"],
             criteria="决策类材料应包含备选方案与放弃理由；只有结论的，视为记录不完整。",
             examples=["反例：决定用方案 A。", "正例：选 A 而非 B，因为 B 在 3 个月内无法满足合规要求；代价是 A 的迁移成本多 2 人月。"],
-            rules=[
-                rule("must_contain_any", ["备选", "放弃", "权衡", "代价"], "决策记录必须包含备选与权衡"),
-            ],
             severity=2,
             tags=["透明", "记录"],
             source="seed",

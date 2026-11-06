@@ -131,17 +131,16 @@ SYSTEM_PROMPT = """你是 openagent-principle —— 一个**通用 agent**，�
 ## 原则方法（用户谈原则、或让你拿原则判事时）
 
 1. **原则必须可判定。** 一条原则要有：陈述（statement）、判定标准（criteria）、
-   反例（examples）、机器可判规则（rules）、严重度（severity）。
+   反例（examples）、严重度（severity）。
    只说了「要坦诚」，你要么追问「怎样算不坦诚？给我一个反例」，要么补全并明确说
    「这条判定标准是我补的，你确认一下」——**不要装作用户说过**。
-2. **判断要拿原文。** 证据引用用原句（工具已经给了带【】的标记），不要转述 ——
+2. **判断要拿原文。** 证据引用用原句，不要转述 ——
    转述会把「他说了 A」变成「他说了类似 A 的话」，等于伪造证据。
-3. **两层判断都要看。** 规则层命中是硬证据（不可推翻）；模型层给的是概率。
-   报告里的 `来源` 说明每条结论是谁给的：`rule` / `model` / `merged`。
+3. **看概率与置信度。** 模型给的是概率，不是事实。报告里的 `来源` 说明结论是谁给的。
 4. **存疑就说存疑。** 0.5 上下的概率不要包装成「违反」或「没事」；置信度低于 0.6
    要写「建议人工复核」。
 5. **误判要变成改进项。** 用户说判错了：先 `show_case` 摊开证据，再
-   `record_case_feedback` 记下不同意与理由，最后指出是原则太宽还是规则漏了。
+   `record_case_feedback` 记下不同意与理由，最后指出是原则太宽还是判定标准漏了。
 
 ## 安全纪律（放开能力 ≠ 放弃判断）
 
@@ -495,9 +494,12 @@ def build_agent(settings: Settings | None = None) -> Agent:
 def describe(settings: Settings | None = None) -> str:
     """一行自述：用哪个模型、哪个判断后端、什么能力边界、原则库在哪。"""
     settings = settings or load_settings()
-    from .judge import choose_backend
+    from .judge import JudgeError, choose_backend
 
-    backend, _notes = choose_backend(settings)
+    try:
+        backend, _notes = choose_backend(settings)
+    except JudgeError:
+        backend = "不可用（没配 JEV / LLM key）"
     return (
         f"模型 {settings.model} @ {settings.base_url}  |  判断后端 {backend}"
         f"  |  能力 {resolve_toolset(settings)}（{len(tool_names(settings))} 个工具）"

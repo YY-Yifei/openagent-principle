@@ -180,7 +180,7 @@ def list_principles(query: str = "", tag: str = "", include_archived: bool = Fal
 
 
 def get_principle(principle_id: str) -> str:
-    """看一条原则的完整内容（陈述/理由/适用范围/判定标准/例子/机器可判规则/版本）。
+    """看一条原则的完整内容（陈述/理由/适用范围/判定标准/例子/版本）。
 
     Args:
         principle_id: 原则编号，如 `P-001`。
@@ -205,7 +205,6 @@ def save_principle(
     scope: str = "",
     criteria: str = "",
     examples: str = "",
-    rules: str = "",
     severity: int = 0,
     tags: str = "",
     principle_id: str = "",
@@ -213,7 +212,7 @@ def save_principle(
     """新建或修改一条原则（给了 principle_id 就是修改，否则新建）。
 
     **一条好原则必须可判定**：只有一句「要坦诚」是口号，判断不了。所以尽量补齐
-    `criteria`（人话判定标准）与 `rules`（机器可判的硬规则），反例写进 `examples`。
+    `criteria`（人话判定标准），反例写进 `examples`。
     判定不了的原则，判断阶段只能给出「说不准」。
 
     Args:
@@ -223,8 +222,6 @@ def save_principle(
         scope: 适用范围，如「复盘 / 事故报告」。
         criteria: 人话判定标准：什么样算违反。
         examples: 例子，每行一个；建议写成「反例：…」「正例：…」。
-        rules: 机器可判规则，JSON 数组字符串。可用类型见 models.RULE_KINDS，
-            例如 `[{"kind":"must_not_contain_any","value":["基本没问题"]}]`。
         severity: 严重度 1~5（5=红线）；0 表示不修改/新建时默认 3。
         tags: 标签，逗号或空格分隔。
         principle_id: 要修改的原则编号；留空 = 新建。
@@ -240,7 +237,6 @@ def save_principle(
     scope = _as_text(scope)
     criteria = _as_text(criteria)
     examples = _as_text(examples)
-    rules = _as_text(rules)
     tags = _as_text(tags)
     principle_id = _as_text(principle_id)
     severity = _to_int(severity, 0, minimum=0)
@@ -265,14 +261,11 @@ def save_principle(
             scope=scope,
             criteria=criteria,
             examples=_split_lines(examples),
-            rules=rules,
             severity=severity,
             tags=_split_tags(tags),
             principle_id=principle_id,
             settings=settings,
         )
-    except api.InvalidInputError as exc:
-        return f"[错误] {exc}。正确示例：`[{{\"kind\":\"must_not_contain_any\",\"value\":[\"绝对没问题\"]}}]`"
     except api.ApiError as exc:
         return f"[错误] {exc}"
     except Exception as exc:  # noqa: BLE001  工具永不抛异常
@@ -280,8 +273,8 @@ def save_principle(
 
     action = "已更新" if existing is not None else "已新建"
     hints: list[str] = []
-    if not saved.criteria and not saved.rules:
-        hints.append("它现在还不可判定：补 criteria（人话标准）或 rules（机器可判），否则判断只能给「说不准」")
+    if not saved.criteria:
+        hints.append("它现在还不可判定：补 criteria（人话判定标准），否则判断只能给「说不准」")
     elif not saved.examples:
         hints.append("建议补一个反例（examples 每行一个），判断会更稳")
     hint = ("\n提示：" + "；".join(hints)) if hints else ""
@@ -322,7 +315,7 @@ def delete_principle(principle_id: str, hard: bool = False) -> str:
 # 判断
 # ---------------------------------------------------------------------------
 def judge_material(material: str, source: str = "", principle_ids: str = "") -> str:
-    """判断一段材料是否违反原则（规则层 + JEV/LLM 模型层，结果自动存为案例）。
+    """判断一段材料是否违反原则（JEV / LLM 模型层，结果自动存为案例）。
 
     材料请**原样**传入，不要先总结 —— 证据引用需要原文。一次调用最多带
     `PRINCIPLE_MAX_PRINCIPLES_PER_JUDGE` 条原则（默认 12，按严重度自动挑）。
@@ -427,7 +420,7 @@ def record_case_feedback(
     """记录人工对一次判断的反馈（同意/不同意），用于发现哪条原则判不准。
 
     这是「痛苦 + 反思 = 进步」的落点：反馈不改写历史案例，但会累积成
-    「哪条原则误判率最高」的统计，提示去修订它的 criteria / rules。
+    「哪条原则误判率最高」的统计，提示去修订它的 criteria / examples。
 
     Args:
         case_id: 案例号。

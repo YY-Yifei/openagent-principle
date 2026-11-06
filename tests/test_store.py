@@ -19,7 +19,7 @@ def _judgement(case_id="C-20260101-000000-abcd", principle_id="P-001", violated=
         score=0.5,
         severity=4,
         verdicts=[Verdict(principle_id, "t", violated, severity=4)],
-        backend="rules",
+        backend="jev",
         created_at="2026-01-01T00:00:00+08:00",
     )
 
@@ -131,4 +131,4 @@ def test_seed_principles_are_judgeable():
     for data in seed_principles():
         principle = Principle.from_dict(data)
         principle.validate()
-        assert principle.criteria or principle.rules
+        assert principle.criteria

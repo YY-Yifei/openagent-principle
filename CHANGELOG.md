@@ -1,5 +1,42 @@
 # CHANGELOG
 
+## 未发布
+
+### 移除规则层（破坏性变更）
+
+**判断完全交给模型。** 确定性规则引擎（短语表 / 正则 / 长度阈值）整个移除 ——
+它和设计哲学冲突：不认识否定（「不用备份」含「备份」）、替模型做判断、
+用字面命中冒充语义结论。
+
+- **删除 `rules.py`**（`RuleHit` / `RuleReport` / `evaluate` / `rule_report` / `rule_verdict`）。
+- **`models.py`**：删 `Rule`、`RULE_KINDS`、`parse_rules`、`MAX_REGEX_LEN`；
+  `Principle` 删 `rules` 与 `scope_keywords` 字段、删 `applies_to()`。
+- **`judge.merge` 重写**：签名从 `merge(principle, rule_report, model_verdict)` 改为
+  `merge(principle, model_verdict)`。只保留两条规则 —— 模型有结论就采纳；
+  模型自相矛盾（所选选项概率 < 0.6）降为存疑。
+- **`choose_backend` 不再降级到 `rules`**：JEV 与 LLM 都没配时抛 `JudgeError`
+  （「没有可用的判断后端」）。判断需要模型，不提供假装在判的降级。
+- **`jev.build_questions` / `principle_instruction`** 去掉 `rule_reports` 参数，
+  不再把规则报告写进 instructions。
+- **CLI**：删 `--rule` 参数与 `--backend rules`；`add` / `update` 不再接受规则。
+- **API / tools**：`save_principle` 去掉 `rules` 参数。
+- **`config.JUDGE_BACKENDS`**：`("auto", "jev", "llm", "rules")` → `("auto", "jev", "llm")`。
+- **种子原则**：8 条全部去掉 `rules` / `scope_keywords`，只保留 `criteria` / `examples`；
+  `data/principles.seed.json` 已重新生成。
+- **`agent.describe` / `cli check`**：没配后端时显示「不可用」，不再抛异常。
+- **测试**：删 `test_rules.py`；`test_judge.py` 的合并用例重写为「模型结论 + 矛盾检测」；
+  判断链路用例改用假 JEV transport。
+
+### JEV 重试
+
+- **200 但响应不可用也重试**：不是 JSON（网关吐 HTML 错误页）、没有 `answers`、
+  `answers` 里一道题都解析不出来 —— 这三种以前直接抛 `JevError` 降级，现在按可重试处理。
+  重打一次往往就好了，直接降级反而丢掉语义判断。
+- **默认重试次数 2 → 3**（`jev.DEFAULT_RETRIES`），退避 `(1, 2)` → `(1, 2, 4)` 秒。
+  最坏情况 4 次请求、多等 7 秒。
+- 不可重试的仍是：401/403/404 等非 `RETRYABLE_STATUS` 状态码、缺 key、材料为空、题型不合法。
+- 新增测试：非 JSON 重试后成功、空 answers / 解析不出答案重试后成功、重试耗尽（4 次请求）。
+
 ## 0.5.0 — 2026-11-05
 
 **判断架构重构：最终语义判断统一由 JEV 裁决；CLI 支持单轮提示词；移除 `fetch_url`。**

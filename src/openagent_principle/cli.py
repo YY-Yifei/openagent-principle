@@ -25,7 +25,7 @@ from pathlib import Path
 from . import __version__
 from .config import JUDGE_BACKENDS, Settings, load_settings, resolve_home
 from .judge import Judge, JudgeError, choose_backend, format_judgement
-from .models import SEVERITY_LABELS, ModelError, Principle, Rule
+from .models import SEVERITY_LABELS, ModelError, Principle
 from .store import PrincipleStore, StoreError, seed_principles
 
 #: 退出码（写进 README，CI 会依赖它）。
@@ -80,29 +80,6 @@ def _msg_text(msg: object) -> str:
     return "".join(parts)
 
 
-def _parse_rule_args(items: list[str] | None) -> list[Rule]:
-    """把 `--rule must_not_contain_any:基本没问题,影响不大` 解析成规则。
-
-    语法：`类型:值`。短语类用逗号分隔（中英文逗号都认），正则类原样传，
-    长度类传整数。解析后立刻 `validate()` —— 写错的规则在保存时就报，
-    而不是等到判断时才发现这条规则根本没生效。
-    """
-    rules: list[Rule] = []
-    for raw in items or []:
-        kind, sep, value = (raw or "").partition(":")
-        if not sep:
-            raise ModelError(f"--rule 需要 `类型:值` 的形式，收到 {raw!r}（可用类型见 README）")
-        kind, value = kind.strip(), value.strip()
-        if kind in ("min_chars", "max_chars", "must_match", "must_not_match"):
-            parsed: object = value
-        else:
-            parsed = [v.strip() for v in value.replace("，", ",").split(",") if v.strip()]
-        rule = Rule(kind=kind, value=parsed)  # type: ignore[arg-type]
-        rule.validate()
-        rules.append(rule)
-    return rules
-
-
 # ---------------------------------------------------------------------------
 # 原则管理
 # ---------------------------------------------------------------------------
@@ -110,7 +87,7 @@ def _cmd_add(args: argparse.Namespace) -> int:
     store = _store()
     existed = store.get(args.id) if args.id else None
     # `add` 只负责新建。撞号时以前会走 store.save 的更新路径，把旧原则的
-    # criteria / rules / examples 全部清空（复审 4.3）—— 一次手滑就丢数据。
+    # criteria / examples 全部清空（复审 4.3）—— 一次手滑就丢数据。
     # 改字段请用 `update`；真要整条替换，显式加 `--force`。
     if existed is not None and not getattr(args, "force", False):
         print(
@@ -130,7 +107,6 @@ def _cmd_add(args: argparse.Namespace) -> int:
         scope=args.scope or "",
         criteria=args.criteria or "",
         examples=args.example or [],
-        rules=_parse_rule_args(args.rule),
         severity=args.severity,
         tags=args.tag or [],
     )
@@ -140,8 +116,8 @@ def _cmd_add(args: argparse.Namespace) -> int:
         return EXIT_PASS
     action = "已覆盖" if existed else "已保存"
     print(f"{action} {saved.id}《{saved.title}》 版本 {saved.version} 严重度 {saved.severity}（{saved.severity_label}）")
-    if not saved.criteria and not saved.rules:
-        print("提示：它现在还不可判定 —— 补 --criteria（人话标准）或 --rule（机器可判），否则判断只会说「存疑」。")
+    if not saved.criteria:
+        print("提示：它现在还不可判定 —— 补 --criteria（人话判定标准），否则判断只会说「存疑」。")
     return EXIT_PASS
 
 
@@ -160,8 +136,6 @@ def _cmd_update(args: argparse.Namespace) -> int:
         principle.examples.extend(args.example)
     if args.tag:
         principle.tags = list(dict.fromkeys(principle.tags + args.tag))
-    if args.rule:
-        principle.rules = _parse_rule_args(args.rule)
     if args.severity is not None:
         principle.severity = max(1, min(5, args.severity))
     saved = store.save(principle)
@@ -251,7 +225,7 @@ def _cmd_seed(args: argparse.Namespace) -> int:
         return EXIT_PASS
     print(f"种子原则：写入 {added} 条，跳过已存在 {skipped} 条（--force 可覆盖）。")
     if added:
-        print("它们每条都带判定标准或机器可判规则 —— 可以直接 `judge` 了。")
+        print("它们每条都带判定标准与反例 —— 可以直接 `judge` 了。")
     return EXIT_PASS
 
 
@@ -380,7 +354,7 @@ def _cmd_feedback(args: argparse.Namespace) -> int:
         return EXIT_PASS
     print(f"已记录：{record['case_id']} —— {target}「{'同意' if agree else '不同意'}」")
     if not agree:
-        print("建议：用 `show` 看那条原则的判定标准 —— 误判通常意味着 criteria 写宽了，或少了机器可判规则。")
+        print("建议：用 `show` 看那条原则的判定标准 —— 误判通常意味着 criteria 写宽了，或少了贴近真实材料的反例。")
     return EXIT_PASS
 
 
@@ -486,7 +460,13 @@ def _cmd_check(args: argparse.Namespace) -> int:
 
     settings = load_settings()
     print(describe(settings))
-    backend, notes = choose_backend(settings)
+    try:
+        backend, notes = choose_backend(settings)
+    except JudgeError as exc:
+        # 没配任何模型：体检要如实说「判断不可用」，但体检本身不算失败 ——
+        # 用户可能只是想看看原则库在哪。
+        print(f"[..] {exc}")
+        backend, notes = "不可用", []
     for note in notes:
         print(f"[..] {note}")
     ok = True
@@ -501,7 +481,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
             print(f"[x] LLM 不可用：{exc.message}")
             ok = False
     else:
-        print("[..] 没配 LLM key：agent 模式不可用，判断只能走 jev 或 rules")
+        print("[..] 没配 LLM key：agent 模式不可用，判断只能走 jev")
 
     if settings.jev_configured:
         questions = {
@@ -521,7 +501,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
             print(f"[x] JEV 不可用：{exc.message}")
             ok = False
     else:
-        print("[..] 没配 JEV key：判断会走 llm 或 rules（两者都不可用时只剩规则层）")
+        print("[..] 没配 JEV key：判断会走 llm（两者都没配时判断不可用）")
 
     resolution = resolve_home()
     stats = _store().stats()
@@ -535,9 +515,14 @@ def _cmd_check(args: argparse.Namespace) -> int:
 # 交互对话（AgentScope 驱动）
 # ---------------------------------------------------------------------------
 def _banner(settings: Settings, mode: str) -> str:
-    backend, _ = choose_backend(settings)
     from .agent import resolve_toolset, tool_names
 
+    try:
+        backend, _ = choose_backend(settings)
+    except JudgeError:
+        # 没配模型时 chat 仍然可用（agent 能读文件、跑命令），只是判不了原则。
+        # 这里不能抛 —— 抛了会让整个交互会话起不来。
+        backend = "不可用（没配 JEV / LLM key）"
     names = tool_names(settings)
     shell = "开" if settings.allow_shell else "关"
     return (
@@ -684,7 +669,7 @@ EXAMPLES = """\
 常用：
   principles seed                          # 装 8 条《原则》启发的种子原则
   principles add "复盘必须给改进项" "复盘里提到错误时，必须给一条可执行改进措施" \\
-             --scope 复盘 --severity 4 --rule must_contain_any:改进,措施,责任人
+             --scope 复盘 --severity 4 --criteria "只有「下次注意」不算改进措施"
   principles judge ./周报.md                # 判一份文件（退出码：0 通过 / 1 违反 / 2 存疑）
   principles judge - < 邮件.txt --json      # 管道喂材料，机器可读
   principles cases                          # 最近的判断案例
@@ -731,13 +716,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--scope", default="", help="适用范围，如「复盘 / 事故报告」")
     p.add_argument("--criteria", default="", help="人话判定标准：什么样算违反")
     p.add_argument("--example", action="append", default=[], help="例子（可多次），建议写「反例：…」")
-    p.add_argument(
-        "--rule",
-        action="append",
-        default=[],
-        help="机器可判规则，`类型:值`（可多次）。类型见 README：must_contain_any / must_not_contain_any / "
-        "must_match / must_not_match / min_chars / max_chars",
-    )
     p.add_argument("--severity", type=int, default=3, choices=range(1, 6), metavar="1-5", help="严重度，默认 3")
     p.add_argument("--tag", action="append", default=[], help="标签（可多次）")
     p.add_argument(
@@ -756,7 +734,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--scope")
     p.add_argument("--criteria")
     p.add_argument("--example", action="append", default=[], help="追加例子（可多次）")
-    p.add_argument("--rule", action="append", default=[], help="重设机器可判规则（可多次）")
     p.add_argument("--severity", type=int, choices=range(1, 6), metavar="1-5")
     p.add_argument("--tag", action="append", default=[], help="追加标签")
     p.add_argument("--json", action="store_true", help="输出 JSON（给程序/其他 agent 用）")
@@ -856,7 +833,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return int(handler(args))
     except ModelError as exc:
-        # 用户输入不合法（`--rule` 写错、字段缺失）→ 参数错误，不是执行失败。
+        # 用户输入不合法（字段缺失）→ 参数错误，不是执行失败。
         # 退出码契约：0 通过 / 1 违反 / 2 存疑或参数错误 / 3 执行失败。
         print(f"[错误] {exc}", file=sys.stderr)
         return EXIT_UNCERTAIN

@@ -94,6 +94,14 @@ def test_unknown_backend_falls_back_to_auto(env, monkeypatch):
     assert load_settings().judge_backend == "auto"
 
 
+def test_removed_rules_backend_is_rejected_loudly(env, monkeypatch):
+    """`rules` 已移除，不能静默退回 auto —— 有 LLM key 时那等于把材料发给外部模型。"""
+    monkeypatch.setenv("PRINCIPLE_JUDGE_BACKEND", "rules")
+    with pytest.raises(ValueError) as excinfo:
+        load_settings()
+    assert "rules" in str(excinfo.value)
+
+
 def test_overrides_beat_environment(env, monkeypatch):
     monkeypatch.setenv("PRINCIPLE_MODEL", "from-env")
     settings = load_settings(model="from-arg", temperature=0.9)

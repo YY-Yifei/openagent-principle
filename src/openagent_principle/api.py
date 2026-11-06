@@ -8,7 +8,7 @@
 
     from openagent_principle.api import judge, list_principles
 
-    result = judge("目前基本没问题。", backend="rules")
+    result = judge("目前基本没问题。")
     if result.overall == "violation":
         for v in result.violations:
             print(v.principle_id, v.evidence)
@@ -17,7 +17,7 @@
 程序需要的是能 `except` 的东西，不是要正则匹配的文本。
 `tools.py` 负责把异常翻译成给模型看的话。
 
-本模块不 import agentscope，与 `judge` / `rules` / `jev` 一样只用 stdlib。
+本模块不 import agentscope，与 `judge` / `jev` 一样只用 stdlib。
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from typing import Any, Sequence
 
 from .config import Settings, load_settings
 from .judge import Judge, JudgeError
-from .models import Judgement, ModelError, Principle, parse_rules
+from .models import Judgement, ModelError, Principle
 from .store import PrincipleStore, StoreError
 
 
@@ -43,11 +43,11 @@ class NotFoundError(ApiError):
 
 
 class InvalidInputError(ApiError):
-    """输入不合法（规则写错、字段缺失、材料为空）。"""
+    """输入不合法（字段缺失、材料为空）。"""
 
 
 class BackendError(ApiError):
-    """判断后端失败（网络、鉴权、响应格式）。"""
+    """判断后端不可用或失败（没配 key、网络、鉴权、响应格式）。"""
 
 
 def _store(settings: Settings | None = None) -> PrincipleStore:
@@ -103,7 +103,6 @@ def save_principle(
     scope: str = "",
     criteria: str = "",
     examples: Sequence[str] | None = None,
-    rules: str | list[Any] | None = None,
     severity: int = 0,
     tags: Sequence[str] | None = None,
     principle_id: str = "",
@@ -115,7 +114,7 @@ def save_principle(
 
     Raises:
         NotFoundError: 指定了 `principle_id` 但它不存在。
-        InvalidInputError: 字段不合法（缺标题/陈述、规则写错）。
+        InvalidInputError: 字段不合法（缺标题/陈述）。
         ApiError: 写盘失败。
     """
     store = _store(settings)
@@ -147,11 +146,6 @@ def save_principle(
         principle.tags = [t.strip() for t in tags if t.strip()]
     if severity:
         principle.severity = max(1, min(5, int(severity)))
-    if rules:
-        try:
-            principle.rules = parse_rules(rules)
-        except ModelError as exc:
-            raise InvalidInputError(f"rules 不合法：{exc}") from exc
 
     try:
         return store.save(principle)
@@ -192,6 +186,7 @@ def judge(
     backend: str = "",
     save: bool = True,
     settings: Settings | None = None,
+    transport: Any = None,
 ) -> Judgement:
     """判断一段材料，返回结构化 `Judgement`。
 
@@ -199,16 +194,17 @@ def judge(
         material: 被判断的原文（不要先总结 —— 证据引用需要原句）。
         principle_ids: 只判这些原则（空 = 按严重度自动挑）。
         source: 材料来源标签，写进案例。
-        backend: 临时覆盖后端（jev / llm / rules / auto）。
+        backend: 临时覆盖后端（jev / llm / auto）。
         save: 是否把案例写进 `cases.jsonl`。
         settings: 配置（默认读环境变量）。
+        transport: 传输层钩子（测试离线用）。
 
     Returns:
         `Judgement`：`overall` / `violations` / `verdicts` / `notes` 都是结构化字段。
 
     Raises:
         InvalidInputError: 材料为空。
-        BackendError: 判断过程失败。
+        BackendError: 没有可用的判断后端。
         ApiError: 案例写盘失败。
     """
     settings = settings or load_settings()
@@ -219,9 +215,14 @@ def judge(
             subject=source,
             backend=backend,
             save=save,
+            transport=transport,
         )
     except JudgeError as exc:
-        raise InvalidInputError(str(exc)) from exc
+        # 材料为空是调用方的输入问题；没有可用后端是环境问题 —— 分开报，
+        # 调用方才能决定「改输入」还是「去配 key」。按入参判断，不解析异常文案。
+        if not (material or "").strip():
+            raise InvalidInputError(str(exc)) from exc
+        raise BackendError(str(exc)) from exc
     except (StoreError, ModelError) as exc:
         raise ApiError(str(exc)) from exc
 
@@ -233,13 +234,15 @@ def judge_file(
     backend: str = "",
     save: bool = True,
     settings: Settings | None = None,
+    transport: Any = None,
 ) -> Judgement:
     """读文件并判断。
 
     Raises:
         NotFoundError: 文件不存在。
         InvalidInputError: 是目录 / 空文件 / 二进制。
-        BackendError: 判断过程失败。
+        BackendError: 没有可用的判断后端。
+        ApiError: 读文件或写案例失败。
     """
     settings = settings or load_settings()
     target = Path(path).expanduser()
@@ -262,6 +265,7 @@ def judge_file(
         backend=backend,
         save=save,
         settings=settings,
+        transport=transport,
     )
 
 

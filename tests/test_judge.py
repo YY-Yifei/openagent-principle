@@ -16,7 +16,6 @@ from openagent_principle.judge import (
     select_principles,
 )
 from openagent_principle.models import Principle, Verdict
-from openagent_principle.rules import rule_verdict
 from openagent_principle.store import PrincipleStore
 
 
@@ -29,10 +28,11 @@ def _model_verdict(violated: bool | None, probability: float = 0.8, confidence: 
 
 
 # --------------------------------------------------------------- 后端选择
-def test_auto_without_keys_falls_back_to_rules(env):
-    backend, notes = choose_backend(_settings())
-    assert backend == "rules"
-    assert any("规则" in note for note in notes)
+def test_auto_without_keys_raises(env):
+    """没有模型就判不了 —— 明确报错，不拿一个假装在判的降级糊弄人。"""
+    with pytest.raises(JudgeError) as excinfo:
+        choose_backend(_settings())
+    assert "没有可用的判断后端" in str(excinfo.value)
 
 
 def test_auto_prefers_jev(env):
@@ -90,142 +90,44 @@ def test_select_empty_library_is_explained(store):
 
 
 # ------------------------------------------------------------------- 合并
-# 架构：最终语义判断由 JEV 裁决；规则层只提供确定性匹配与原文证据。
-def _report(principle, text="", *, in_scope=True, hits=None):
-    """构造一个 RuleReport（不跑真实规则，测试用）。"""
-    from openagent_principle.rules import RuleHit, RuleReport
-
-    return RuleReport(
-        principle_id=principle.id,
-        in_scope=in_scope,
-        hits=hits or [],
-        scope_note="" if in_scope else "材料不在适用范围",
-    )
-
-
-def _hit(rule, passed, detail="", evidence=None):
-    from openagent_principle.rules import RuleHit
-
-    return RuleHit(rule=rule, passed=passed, detail=detail, evidence=evidence or [])
-
-
-def test_merge_jev_pass_wins_over_rule_hit(principle):
-    """**核心架构测试**：规则未通过，但 JEV 判 pass —— 以 JEV 为准。
-
-    以前规则命中是「硬证据，不可推翻」。现在规则只是输入，JEV 是裁决者。
-    冲突必须留痕（reasoning 里写明），但不改判。
-    """
-    from openagent_principle.models import Rule
-
-    p = principle()
-    rule = Rule(kind="must_not_contain_any", value=["基本没问题"])
-    report = _report(p, hits=[_hit(rule, False, "出现了禁止短语", ["…【基本没问题】…"])])
-    verdict = merge(p, report, _model_verdict(False, 0.9, 0.85), backend="jev")
-    assert verdict.violated is False, "JEV 说 pass，规则不能推翻"
+# 架构：判断权完全在模型；程序只做矛盾检测与存疑处理。
+def test_merge_adopts_model_pass(principle):
+    verdict = merge(principle(), _model_verdict(False, 0.9, 0.85), backend="jev")
+    assert verdict.violated is False
     assert verdict.source == "model"
-    assert "规则层有未通过项" in verdict.reasoning
-    assert any("基本没问题" in e for e in verdict.evidence), "规则证据仍要保留"
 
 
-def test_merge_jev_violation_wins_over_rule_pass(principle):
-    """反向冲突：规则全部通过，但 JEV 判 violation —— 仍以 JEV 为准。"""
-    from openagent_principle.models import Rule
-
-    p = principle()
-    rule = Rule(kind="must_contain_any", value=["改进"])
-    report = _report(p, hits=[_hit(rule, True, "包含：改进")])
-    verdict = merge(p, report, _model_verdict(True, 0.88, 0.8), backend="jev")
+def test_merge_adopts_model_violation(principle):
+    verdict = merge(principle(), _model_verdict(True, 0.88, 0.8), backend="jev")
     assert verdict.violated is True
-    assert "规则层全部通过" in verdict.reasoning
+    assert verdict.source == "model"
 
 
-def test_merge_rule_pass_with_uncertain_model_stays_uncertain(principle):
-    """规则通过不能把 JEV 的「存疑」改写成「未违反」。"""
-    from openagent_principle.models import Rule
-
-    p = principle()
-    rule = Rule(kind="must_contain_any", value=["改进"])
-    report = _report(p, hits=[_hit(rule, True, "包含：改进")])
-    verdict = merge(p, report, _model_verdict(None, 0.5, 0.3), backend="jev")
+def test_merge_keeps_model_uncertain(principle):
+    """模型说存疑，程序不能把它改写成「未违反」。"""
+    verdict = merge(principle(), _model_verdict(None, 0.5, 0.3), backend="jev")
     assert verdict.violated is None
     assert verdict.source == "model"
 
 
 def test_merge_contradictory_pass_becomes_uncertain(principle):
     """选了 pass 但概率只有 0.1 —— 模型自相矛盾，降为存疑。"""
-    verdict = merge(principle(), _report(principle()), _model_verdict(False, 0.1, 0.9))
+    verdict = merge(principle(), _model_verdict(False, 0.1, 0.9))
     assert verdict.violated is None
     assert "不一致" in verdict.reasoning
 
 
 def test_merge_contradictory_violation_becomes_uncertain(principle):
     """对称检查：选了 violation 但概率只有 0.49，同样降为存疑。"""
-    verdict = merge(principle(), _report(principle()), _model_verdict(True, 0.49, 0.24))
+    verdict = merge(principle(), _model_verdict(True, 0.49, 0.24))
     assert verdict.violated is None
 
 
-def test_merge_rules_backend_lets_rules_decide(principle):
-    """**显式 rules 模式**：JEV 没答案时，规则可以给出最终结论。"""
-    from openagent_principle.models import Rule
-
-    p = principle()
-    rule = Rule(kind="must_not_contain_any", value=["基本没问题"])
-    report = _report(p, hits=[_hit(rule, False, "出现了禁止短语", ["…【基本没问题】…"])])
-    verdict = merge(p, report, None, backend="rules")
-    assert verdict.violated is True
-    assert verdict.source == "rule"
-    assert verdict.probability == 0.0, "规则层不编造概率"
-    assert verdict.confidence > 0.75
-
-
-def test_merge_non_rules_backend_without_model_is_uncertain(principle):
-    """**后端降级**：jev/llm 没给答案时，规则不能自己定论 —— 必须存疑。"""
-    from openagent_principle.models import Rule
-
-    p = principle()
-    rule = Rule(kind="must_not_contain_any", value=["基本没问题"])
-    report = _report(p, hits=[_hit(rule, False, "出现了禁止短语", ["…【基本没问题】…"])])
-    verdict = merge(p, report, None, backend="jev")
-    assert verdict.violated is None, "语义判断缺席时不能由规则定论"
+def test_merge_without_model_answer_is_uncertain(principle):
+    """**后端降级**：模型没给答案时，程序不能自己定论 —— 必须存疑。"""
+    verdict = merge(principle(), None, backend="jev")
+    assert verdict.violated is None
     assert "语义判断缺席" in verdict.reasoning
-    assert verdict.evidence, "规则证据仍要保留供复核"
-
-
-def test_merge_out_of_scope_is_not_applicable(principle):
-    """范围外材料：这条原则不适用 → 未违反（不是存疑）。
-
-    标成存疑会污染整体结论：一份完全合规的材料，只要有一条范围外原则，
-    就永远拿不到 pass。
-    """
-    p = principle()
-    report = _report(p, in_scope=False)
-    verdict = merge(p, report, None, backend="rules")
-    assert verdict.violated is False
-    assert "不适用" in verdict.reasoning
-
-
-def test_merge_out_of_scope_without_model_is_not_applicable(principle):
-    """非 rules 模式同理：范围外不是「判不了」，是「不归我管」。"""
-    p = principle()
-    report = _report(p, in_scope=False)
-    verdict = merge(p, report, None, backend="jev")
-    assert verdict.violated is False
-    assert "不适用" in verdict.reasoning
-
-
-def test_merge_out_of_scope_ignores_model_verdict(principle):
-    """**范围外时模型说什么都不采纳**（OCR 复审发现）。
-
-    以前范围检查只在 `model_verdict is None` 分支里做。模型若对一条范围外的
-    原则给了答案（它可能没读懂 scope 提示），直接采纳会把「不适用」变成
-    违反/通过 —— 确定性判断不该被概率覆盖。
-    """
-    p = principle()
-    report = _report(p, in_scope=False)
-    verdict = merge(p, report, _model_verdict(True, 0.95, 0.9), backend="jev")
-    assert verdict.violated is False, "范围外不该被模型判成违反"
-    assert "不适用" in verdict.reasoning
-    assert "已忽略" in verdict.reasoning
 
 
 def test_verdict_from_answer_pass_without_probabilities_is_not_uncertain(principle):
@@ -243,7 +145,7 @@ def test_verdict_from_answer_pass_without_probabilities_is_not_uncertain(princip
     verdict = _verdict_from_answer(p, answer)
     assert verdict.violated is False
     assert verdict.probability == 1.0, "pass 的所选选项概率应为 1.0"
-    merged = merge(p, _report(p), verdict, backend="llm")
+    merged = merge(p, verdict, backend="llm")
     assert merged.violated is False, "不能被误降为存疑"
 
 
@@ -259,95 +161,125 @@ def test_verdict_from_answer_violation_without_probabilities_still_violates(prin
     assert verdict.probability == 1.0
 
 
-def test_merge_without_rules_follows_model(principle):
-    verdict = merge(principle(), _report(principle()), _model_verdict(True, 0.9, 0.8))
-    assert verdict.violated is True
-    assert verdict.source == "model"
-
-
-def test_merge_without_anything_is_uncertain(principle):
-    verdict = merge(principle(rules=[]), _report(principle()), None, backend="rules")
-    assert verdict.violated is None
-
-
 def test_merge_downgrades_self_contradicting_model_verdict(principle):
     """模型选了 violation，但自报概率 < 0.6 —— 自相矛盾，降成存疑。"""
     for probability, confidence in ((0.49, 0.24), (0.51, 0.26), (0.59, 0.4)):
-        verdict = merge(
-            principle(rules=[]), _report(principle()), _model_verdict(True, probability, confidence)
-        )
+        verdict = merge(principle(), _model_verdict(True, probability, confidence))
         assert verdict.violated is None, probability
         assert "不一致" in verdict.reasoning
         assert verdict.probability == pytest.approx(probability)
 
 
 def test_merge_keeps_confident_model_violation(principle):
-    verdict = merge(principle(rules=[]), _report(principle()), _model_verdict(True, 0.85, 0.77))
+    verdict = merge(principle(), _model_verdict(True, 0.85, 0.77))
     assert verdict.violated is True
 
 
 # --------------------------------------------------------------- 整条链路
-def test_judge_with_rules_backend_flags_violation(store, principle):
+def _jev_transport(answers: dict, model: str = "jev-1.13.0"):
+    """固定返回给定 answers 的传输层。"""
+
+    def _send(url, headers, payload, timeout):  # noqa: ANN001, ARG001
+        return 200, json.dumps({"model": model, "answers": answers})
+
+    return _send
+
+
+def test_judge_with_jev_flags_violation(store, principle):
     store.save(principle())
-    judge = Judge(_settings(), store)
-    judgement = judge.judge("目前基本没问题，客户还没发现。", backend="rules")
+    transport = _jev_transport(
+        {
+            "p_001": {
+                "type": "choice",
+                "choice": "violation",
+                "probabilities": {"pass": 0.05, "violation": 0.9},
+                "confidence": 0.85,
+            },
+            "overall": {"type": "choice", "choice": "violation"},
+        }
+    )
+    judgement = Judge(_settings(jev_api_key="k"), store).judge(
+        "目前基本没问题，客户还没发现。", backend="jev", transport=transport
+    )
     assert judgement.overall == "violation"
-    assert judgement.backend == "rules"
+    assert judgement.backend == "jev"
     assert judgement.severity == 4
     assert judgement.violations and judgement.violations[0].principle_id == "P-001"
-    assert "基本没问题" in judgement.violations[0].evidence[0]
     # 案例落盘了
     assert store.list_cases()[0].case_id == judgement.case_id
 
 
-def test_judge_with_rules_backend_passes_clean_material(store, principle):
+def test_judge_with_jev_passes_clean_material(store, principle):
     store.save(principle())
-    judgement = Judge(_settings(), store).judge(
-        "存在 2 个高优缺陷，若周五前不修复将影响 30% 用户下单。", backend="rules"
+    transport = _jev_transport(
+        {
+            "p_001": {
+                "type": "choice",
+                "choice": "pass",
+                "probabilities": {"pass": 0.95, "violation": 0.05},
+            },
+            "overall": {"type": "choice", "choice": "pass"},
+        }
+    )
+    judgement = Judge(_settings(jev_api_key="k"), store).judge(
+        "存在 2 个高优缺陷，若周五前不修复将影响 30% 用户下单。",
+        backend="jev",
+        transport=transport,
     )
     assert judgement.overall == "pass"
     assert judgement.score == 0.0
 
 
-def test_judge_principle_without_rules_is_uncertain_locally(store):
-    store.save(Principle(id="P-001", title="坦诚", statement="要说实话"))
-    judgement = Judge(_settings(), store).judge("任意材料", backend="rules")
-    assert judgement.overall == "uncertain"
-    assert judgement.verdicts[0].violated is None
-    assert any("无法判断" in v.reasoning for v in judgement.verdicts)
+def test_judge_without_any_backend_raises(store, principle):
+    """没配任何模型 → 判断不可用，明确报错。"""
+    store.save(principle())
+    with pytest.raises(JudgeError) as excinfo:
+        Judge(_settings(), store).judge("任意材料")
+    assert "没有可用的判断后端" in str(excinfo.value)
 
 
 def test_judge_empty_library_is_uncertain_with_hint(store):
-    judgement = Judge(_settings(), store).judge("任意材料", backend="rules")
+    judgement = Judge(_settings(jev_api_key="k"), store).judge("任意材料", backend="jev")
     assert judgement.overall == "uncertain"
     assert judgement.verdicts == []
     assert any("空" in note for note in judgement.notes)
 
 
+def test_judge_empty_library_wins_over_missing_backend(store):
+    """空原则库是「先去加原则」的结论，不能被「没有可用的判断后端」盖掉（OCR 复审发现）。
+
+    以前 `choose_backend` 在空库检查之前调用，没配 key 时用户看到的是后端错误，
+    而真正该做的事是加原则。
+    """
+    judgement = Judge(_settings(), store).judge("任意材料")
+    assert judgement.overall == "uncertain"
+    assert any("空" in note for note in judgement.notes)
+    assert not any("没有可用的判断后端" in note for note in judgement.notes)
+
+
 def test_judge_truncates_material_and_says_so(store, principle):
     store.save(principle())
-    judge = Judge(_settings(max_material_chars=20), store)
-    judgement = judge.judge("基本没问题" + "啊" * 100, backend="rules")
+    judge = Judge(_settings(max_material_chars=20, jev_api_key="k"), store)
+    judgement = judge.judge(
+        "基本没问题" + "啊" * 100, backend="jev", transport=_jev_transport({})
+    )
     assert judgement.material_chars == 20
     assert any("只判前 20" in note for note in judgement.notes)
 
 
-def test_judge_falls_back_to_rules_when_jev_fails(store, principle):
-    """**后端降级**：JEV 挂了、LLM 也没配 → 降级 rules，规则给出结论。
-
-    这是「显式 rules 模式」之外唯一允许规则定论的情况 —— 已经没有语义判断
-    能力了，给「存疑」不如给「规则能确定的部分」并明确标注降级。
-    """
+def test_judge_marks_uncertain_when_jev_fails_and_no_llm(store, principle):
+    """**后端降级**：JEV 挂了、LLM 也没配 → 语义判断缺席，逐条一律存疑。"""
     store.save(principle())
     settings = _settings(jev_api_key="k")
     transport = lambda *a, **k: (500, "gateway down")  # noqa: E731
     judgement = Judge(settings, store).judge(
         "目前基本没问题。", backend="jev", transport=transport, save=False
     )
-    assert judgement.backend == "rules"
-    assert judgement.overall == "violation"
+    assert judgement.backend == "jev"
+    assert judgement.overall == "uncertain"
+    assert judgement.verdicts[0].violated is None
     assert any("jev 后端失败" in note for note in judgement.notes)
-    assert any("降级" in note or "语义判断缺席" in note for note in judgement.notes)
+    assert any("语义判断缺席" in note for note in judgement.notes)
 
 
 def test_judge_jev_failure_with_llm_configured_degrades_to_llm(store, principle):
@@ -386,80 +318,6 @@ def test_judge_jev_failure_with_llm_configured_degrades_to_llm(store, principle)
     )
     assert judgement.backend == "llm"
     assert any("降级到 llm" in note for note in judgement.notes)
-
-
-def test_judge_rule_hit_does_not_override_jev_pass(store):
-    """**规则与 JEV 冲突**：规则命中但 JEV 判 pass —— 整体结论以 JEV 为准。"""
-    from openagent_principle.models import Rule
-
-    store.save(
-        Principle(
-            id="P-001",
-            title="不粉饰",
-            statement="不得用模糊措辞淡化风险",
-            severity=3,
-            rules=[Rule(kind="must_not_contain_any", value=["基本没问题"])],
-        )
-    )
-
-    def transport(url, headers, payload, timeout):  # noqa: ANN001
-        return 200, json.dumps(
-            {
-                "answers": {
-                    "p_001": {
-                        "type": "choice",
-                        "choice": "pass",
-                        "probabilities": {"pass": 0.9, "violation": 0.1},
-                        "confidence": 0.85,
-                    },
-                    "overall": {"type": "choice", "choice": "pass"},
-                }
-            }
-        )
-
-    judgement = Judge(_settings(jev_api_key="k"), store).judge(
-        "目前基本没问题。", backend="jev", transport=transport, save=False
-    )
-    assert judgement.verdicts[0].violated is False, "JEV 说 pass，规则不能推翻"
-    assert judgement.overall == "pass"
-    assert "规则层有未通过项" in judgement.verdicts[0].reasoning
-    assert any("基本没问题" in e for e in judgement.verdicts[0].evidence)
-
-
-def test_judge_rule_pass_does_not_block_jev_violation(store):
-    """反向冲突：规则全部通过，JEV 判 violation —— 以 JEV 为准。"""
-    from openagent_principle.models import Rule
-
-    store.save(
-        Principle(
-            id="P-001",
-            title="复盘要有改进",
-            statement="复盘必须给改进项",
-            severity=4,
-            rules=[Rule(kind="must_contain_any", value=["改进"])],
-        )
-    )
-
-    def transport(url, headers, payload, timeout):  # noqa: ANN001
-        return 200, json.dumps(
-            {
-                "answers": {
-                    "p_001": {
-                        "type": "choice",
-                        "choice": "violation",
-                        "probabilities": {"pass": 0.1, "violation": 0.85},
-                        "confidence": 0.8,
-                    },
-                    "overall": {"type": "choice", "choice": "violation"},
-                }
-            }
-        )
-
-    judgement = Judge(_settings(jev_api_key="k"), store).judge(
-        "复盘：改进措施是下次注意。", backend="jev", transport=transport, save=False
-    )
-    assert judgement.verdicts[0].violated is True
-    assert "规则层全部通过" in judgement.verdicts[0].reasoning
 
 
 def test_judge_overall_follows_jev_when_it_disagrees_with_per_verdict(store):
@@ -588,7 +446,7 @@ def test_judge_rejects_noul_answers(store):
     )
     assert judgement.verdicts[0].violated is None
     assert judgement.overall == "uncertain"
-    assert "无法判断" in judgement.verdicts[0].reasoning
+    assert "语义判断缺席" in judgement.verdicts[0].reasoning
 
 
 def test_judge_rejects_empty_material(store):
@@ -596,11 +454,9 @@ def test_judge_rejects_empty_material(store):
         Judge(_settings(), store).judge("   ")
 
 
-def test_rule_report_and_merge_agree_on_severity(principle):
-    from openagent_principle.rules import rule_report
-
+def test_merge_keeps_principle_severity(principle):
     p = principle()
-    verdict = merge(p, rule_report(p, "基本没问题"), None, backend="rules")
+    verdict = merge(p, _model_verdict(True, 0.9, 0.8))
     assert verdict.severity == p.severity
 
 
@@ -610,14 +466,11 @@ def test_build_questions_key_survives_store_roundtrip(store, principle):
     assert key_map["p_001"] == saved.id
 
 
-def test_build_questions_embeds_rule_report(store, principle):
-    """规则报告必须作为结构化输入写进 JEV 的 instructions。"""
-    from openagent_principle.rules import rule_report
-
+def test_build_questions_embeds_criteria_and_examples(store, principle):
+    """原则的判定标准与反例必须写进 instructions —— 这是给模型的确定性输入。"""
     saved = store.save(principle())
-    report = rule_report(saved, "目前基本没问题。")
-    questions, _ = jev.build_questions([saved], {saved.id: report})
+    questions, _ = jev.build_questions([saved])
     instructions = questions["p_001"]["instructions"]
-    assert "【规则层" in instructions
+    assert "判定标准" in instructions
     assert "基本没问题" in instructions
-    assert "不等于" in instructions, "必须明确告诉 JEV：规则未通过 ≠ 违反"
+    assert "反例" in instructions

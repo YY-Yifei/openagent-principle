@@ -5,7 +5,7 @@
 所以所有数值型读取都走 `env_int` / `env_float`：读不出合法的就退回默认，
 并把「默认值是什么」写在调用处，而不是让 `int('abc')` 在第 47 层调用栈里炸开。
 
-与 ds-search 的关键差别：本项目的**判断层**（`judge` / `rules` / `jev` / `llm`）只用
+与 ds-search 的关键差别：本项目的**判断层**（`judge` / `jev` / `llm`）只用
 stdlib，不 import agentscope。所以这里的配置也要能支撑「没有 agentscope 也能判」——
 `home`、`judge_backend`、`jev_*` 这些字段与 agentscope 无关。
 """
@@ -24,7 +24,7 @@ DEFAULT_MODEL = "deepseek-flash"
 DEFAULT_CONTEXT_SIZE = 1_048_576
 
 #: JEV 端点。**没有默认地址** —— 网关是部署方自己的，写死一个只会把别人的
-#: 内网地址带进仓库。不配 `JEV_BASE_URL` 时 `jev_configured` 为假，自动降级到 llm / rules。
+#: 内网地址带进仓库。不配 `JEV_BASE_URL` 时 `jev_configured` 为假，自动降级到 llm。
 DEFAULT_JEV_BASE_URL = ""
 DEFAULT_JEV_PATH = "/systemone/v1/systemone"
 DEFAULT_JEV_MODEL = "jev-1.13.0"
@@ -52,7 +52,7 @@ ROOT_MARKERS = (
 )
 
 #: 合法后端名。`auto` 不是「猜」，而是下面 `judge.choose_backend` 里那张固定的降级表。
-JUDGE_BACKENDS = ("auto", "jev", "llm", "rules")
+JUDGE_BACKENDS = ("auto", "jev", "llm")
 
 #: 单次判断最多带多少条原则：JEV 按**调用**计费，一次装够才划算；
 #: 但装太多会让每条原则在 `state` 里被稀释，12 是经验分界点。
@@ -307,7 +307,7 @@ def load_settings(**overrides: object) -> Settings:
 
     环境变量：
         PRINCIPLE_HOME                     原则库目录，默认 <项目根>/.openagent-principle（见 `principles home`）
-        PRINCIPLE_JUDGE_BACKEND            auto|jev|llm|rules，默认 auto
+        PRINCIPLE_JUDGE_BACKEND            auto|jev|llm，默认 auto
         PRINCIPLE_API_KEY                  LLM key（缺省回落 DEEPSEEK_API_KEY / OPENAI_API_KEY）
         PRINCIPLE_BASE_URL                 LLM 地址，默认 https://api.deepseek.com
         PRINCIPLE_MODEL                    LLM 模型名，默认 deepseek-flash
@@ -343,8 +343,15 @@ def load_settings(**overrides: object) -> Settings:
         or first_env("JEV_API_KEY", "PRINCIPLE_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY")
     )
     backend = str(overrides.get("judge_backend") or env_str("PRINCIPLE_JUDGE_BACKEND", "auto")).lower()
+    if backend == "rules":
+        # `rules` 后端已移除。不能静默当拼写错误退回 auto —— 有 LLM key 时 auto 会走 llm，
+        # 等于把原本「纯本地」的部署悄悄改成把材料发给外部模型。这里显式报错，让人自己选。
+        raise ValueError(
+            "PRINCIPLE_JUDGE_BACKEND=rules 已不再支持（规则层已移除）。"
+            "请改成 jev 或 llm —— 判断需要模型。"
+        )
     if backend not in JUDGE_BACKENDS:
-        # 写错了不报错：退回 auto（它的降级表会把「没配」翻译成 rules）。
+        # 写错了不报错：退回 auto（它的降级表会挑一个已配置的后端）。
         backend = "auto"
 
     home = overrides.get("home")

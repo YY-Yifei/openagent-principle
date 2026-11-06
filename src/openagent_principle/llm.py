@@ -5,7 +5,7 @@
 解析、同一套合并逻辑，只是答题人从 JEV 换成 OpenAI 兼容的 `chat/completions`。
 
 这也是「不绑死 Jev」的落点：JEV 挂了、或你在别的环境里没有这个端点，
-`PRINCIPLE_JUDGE_BACKEND=llm` 就能继续用；两者都没有就 `rules`（纯本地）。
+`PRINCIPLE_JUDGE_BACKEND=llm` 就能继续用。
 
 与 JEV 的差别（如实写进 README，不假装一样）：
 * LLM 需要把「题型定义」写进 prompt（JEV 是接口原生的），所以多了一层格式约束；
