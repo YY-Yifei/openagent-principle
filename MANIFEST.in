@@ -1,0 +1,6 @@
+# sdist 里要带上「测试需要、但不是包内模块」的文件
+# data/principles.seed.json: test_store.test_seed_file_matches_code 要拿它比对
+include data/principles.seed.json
+include CHANGELOG.md
+include .env.example
+recursive-include tests *.py

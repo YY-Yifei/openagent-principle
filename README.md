@@ -66,7 +66,8 @@
 ## 二、快速开始
 
 ```bash
-pip install -e .            # 或者 pip install openagent-principle（发布后）
+pip install openagent-principle   # 从 PyPI 安装（v0.6.0 起）
+# 想改代码：git clone 后 pip install -e ".[dev]"
 
 principles seed             # 装上 8 条《原则》启发的种子原则（每条都可判定）
 principles list             # 看现有原则

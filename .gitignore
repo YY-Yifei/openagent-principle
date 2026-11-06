@@ -14,4 +14,7 @@ principles.local.json
 *.local.jsonl
 .idea/
 .vscode/
+# 本仓库是 openthree 智能体的工作目录，其状态不进包
+.openthree/
+.tmp/
 .DS_Store

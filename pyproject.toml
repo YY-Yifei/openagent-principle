@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openagent-principle"
-version = "0.5.0"
+version = "0.6.0"
 description = "致敬《原则》的规则化 agent：维护原则、收集材料、用 Jev 式结构化判断检查是否违反原则"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -59,7 +59,9 @@ principles = "openagent_principle.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-openagent_principle = ["data/*.json"]
+# 只有 py.typed：种子原则的**唯一真源**是 store.seed_principles()（代码），
+# 仓库根的 data/principles.seed.json 只是给测试做一致性比对的镜像，不进 wheel。
+openagent_principle = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
