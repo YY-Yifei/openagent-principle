@@ -1,5 +1,9 @@
 # openagent-principle
 
+[![PyPI](https://img.shields.io/pypi/v/openagent-principle.svg)](https://pypi.org/project/openagent-principle/)
+[![Python](https://img.shields.io/pypi/pyversions/openagent-principle.svg)](https://pypi.org/project/openagent-principle/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/YY-Yifei/openagent-principle/blob/main/LICENSE)
+
 > 致敬瑞·达利欧《原则》：**把原则写成可执行的判据，再拿判据去判断现实。**
 
 一个基于 [AgentScope](https://github.com/agentscope-ai/agentscope) 的规则化 agent。它做四件事：
